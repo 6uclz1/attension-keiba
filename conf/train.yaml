@@ -1,0 +1,19 @@
+seed: 2024
+batch_size: 8
+epochs: 5
+learning_rate: 1e-3
+weight_decay: 1e-5
+patience: 2
+pos_weight: 5.0
+n_folds: 2
+num_workers: 0
+device: cpu
+log_every_n_steps: 1
+save_dir: models
+calibration:
+  method: platt
+  min_prob: 1e-5
+  max_prob: 1 - 1e-5
+optuna:
+  enabled: false
+  n_trials: 10

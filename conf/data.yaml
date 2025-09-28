@@ -1,0 +1,36 @@
+raw_dir: data/raw
+interim_dir: data/interim
+processed_dir: data/processed
+models_dir: models
+predictions_dir: predictions
+reports_dir: reports
+n_past_runs: 6
+sequence_features:
+  - finish_pos
+  - time_sec
+  - last3f_sec
+  - distance_m
+  - weight_carried
+  - draw
+static_numeric_features:
+  - weight_carried
+  - popularity
+  - odds
+categorical_features:
+  horse: horse_id
+  jockey: jockey_id
+  trainer: trainer_id
+  going: going
+  surface: surface
+  course: course
+  weather: weather
+  turn: turn
+  sex: sex
+id_columns:
+  race: race_id
+  horse: horse_id
+  target: finish_pos
+odds_column: odds
+results_column: finish_pos
+calibration:
+  method: platt

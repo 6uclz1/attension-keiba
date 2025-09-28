@@ -1,0 +1,16 @@
+start_date: 2022-01-01
+end_date: 2022-12-31
+min_odds: 1.0
+max_odds: 200.0
+ev_threshold: 1.05
+kelly:
+  enabled: true
+  safety: 0.5
+  bankroll: 100000
+  min_stake: 100
+  max_fraction: 0.1
+evaluation:
+  frequency: race
+  equity_curve_path: reports/equity_curve.png
+  bets_csv_path: reports/bets.csv
+  summary_csv_path: reports/backtest_summary.csv

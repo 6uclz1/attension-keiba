@@ -1,0 +1,205 @@
+# ROLE
+あなたはML/MLOpsエンジニア兼ソフトウェアアーキテクトです。
+目的は「競馬予測（JRA想定）のためのAttention/Transformer中心の予測・期待値評価・バックテスト基盤」の最小実用構成（MVP）リポジトリを設計・実装することです。
+高可読・再現性・拡張性を重視し、数時間でデータを差し替えて検証が始められる状態を作ります。
+
+# SCOPE（機能スコープ）
+1) データ取り込み・前処理
+2) 特徴量エンジニアリング（表形式＋系列＋関係）
+3) モデリング（Attention/Transformer中心、必要に応じて補助モデル）
+4) 推論・確率較正・期待値(=確率×オッズ)計算
+5) バックテスト（回収率/Kelly/資金推移）
+6) 分析・可視化（指標、キャリブレーション、重要度/アテンション）
+7) 反復学習・実験管理（設定管理、乱数固定、ログ、モデル保存）
+8) API/CLI（バッチ推論、単発レース推論、バックテスト実行）
+
+# NON GOALS（非スコープ）
+- 本番大規模分散トレーニング
+- 有料API実装（ダミーI/Fは用意）
+- Webスクレイピングの本実装（雛形とI/Fのみ）
+
+# TECH STACK
+- Python 3.10+
+- PyTorch + (お好みで) PyTorch Lightning
+- numpy/pandas/scikit-learn
+- optuna（ハイパラ探索）
+- Hydra or pydantic-based config（設定管理）
+- matplotlib（可視化）※色指定は最小限
+- uv で依存固定
+
+# データモデル（スキーマの雛形）
+`/data/raw/` にCSV想定。サンプルCSVも生成してください（5–10行のダミー）。
+- races.csv: race_id, date, course, distance_m, surface, going, weather, turn, race_name
+- entries.csv: race_id, horse_id, jockey_id, trainer_id, draw, weight_carried, odds, popularity
+- results.csv: race_id, horse_id, finish_pos, time_sec, last3f_sec, margin, corner_order_1,2,3,4
+- horses.csv: horse_id, sex, age, sire, dam, broodmare_sire
+- workouts.csv: horse_id, date, course, clock, evaluation (optional)
+- jockeys.csv: jockey_id, name
+- trainers.csv: trainer_id, name
+- features_aux.csv（任意）: precomputed indices（例：コース適性、距離適性）
+
+※ `race_id, horse_id` は全ファイルで整合。欠損は許容。
+
+# 特徴量設計（要件）
+- 数値・カテゴリ（騎手/厩舎/血統）→ エンベディング or one-hot（基本はEmbedding）
+- 系列特徴：馬ごとの「過去N走」（例: N=8）を時系列テンソル化（順序エンコード必要）
+  - 含める候補：finish_pos、time_sec、last3f、going、course、distance、weight_carried、draw 等
+- 条件注意（Conditional Attention）の導入：現在レース条件（コース/距離/馬場）をクエリとして過去走への注意重みを変化
+- 馬間相関（同一レース内Set Attention/Graph Attention）オプション：出走馬セットを入力し、相互影響で表現を補正
+- ターゲット：
+  - 勝利確率（単勝）
+  - オプションで複勝確率 or 着順分布（Plackett-Luce等は将来拡張）
+
+# モデル要件
+- ベース：Transformer Encoder（Self-Attention）で「過去走系列→馬表現」を生成
+- 条件注意：共通レース条件ベクトルをCross-Attentionで融合
+- 馬間注意（任意フラグ）：同一レース内の全馬表現に対して Set Attention で相関補正
+- 出力：各馬の勝率 p_win（0–1）
+- 損失関数：二値ロス（BCE/LogLoss）。クラス不均衡対策あり（pos_weight 等）
+- 較正：Platt scaling / Isotonic（sklearnでOK）
+- 代替ベースライン：LightGBM（tabular単体）も1本用意し比較できるように
+
+# 評価・可視化
+- 指標：AUC, LogLoss, Brier, Calibration curve(信頼度-実確率), Expected Value@odds, ROI
+- レース単位・年単位・条件別（距離/コース/馬場）でのスライス評価
+- アテンションの解釈可視化：
+  - 過去走系列に対するヘッド別/平均のAttention weightヒートマップ
+  - 条件別クエリでの重み変化例
+  - 馬間注意を有効時は、レース内の影響ネットワーク例
+
+# バックテスト要件
+- 入力：モデル予測確率、ブックオッズ（`entries.csv.odds`）
+- 運用ロジック：
+  - 期待値 EV = p_win × odds (控除前) のしきい値選別（例: EV>1.05）
+  - Kelly fraction（安全係数あり）でベットサイズ算出 or 固定額/固定比率
+- 期間評価：ウォークフォワード（年ごと/開催ごと）
+- 出力：回収率(ROI)、最大ドローダウン、資金曲線（エクイティカーブ）
+
+# 実験管理
+- Hydra設定：`conf/` に `data.yaml`, `model.yaml`, `train.yaml`, `backtest.yaml` 等
+- 乱数固定（Python/NumPy/PyTorch）、デバイス管理（CPU/GPU）
+- ロギング（CSV + 簡易TensorBoard 任意）、モデル保存/読込
+- `seed`, `folds`, `n_past_runs`, `use_horse_interaction_attention` 等のフラグ化
+
+# API/CLI
+- `cli.py`：
+  - `prepare-data` 原データ→特徴テンソル作成
+  - `train` 設定に従って学習
+  - `predict --race_id ...` 単レース推論（出走馬一覧入力→確率出力）
+  - `backtest --start YYYY-MM-DD --end YYYY-MM-DD`
+- `serve.py`（FastAPI最小）：`POST /predict` にレース条件＋出走馬特徴→確率返却
+
+# リポジトリ構成（生成してください）
+
+```
+repo/
+README.md
+pyproject.toml or requirements.txt
+Makefile
+conf/
+data.yaml
+model.yaml
+train.yaml
+backtest.yaml
+data/
+raw/      # CSVサンプル生成
+interim/
+processed/
+models/
+predictions/
+reports/
+src/
+data/
+schemas.py
+loader.py
+preprocess.py
+features.py
+tensors.py
+models/
+transformer.py
+attention_blocks.py   # Conditional / SetAttention 実装
+baseline_lgbm.py
+calibration.py
+train/
+dataset.py
+trainer.py
+metrics.py
+cv.py
+infer/
+predictor.py
+backtest/
+engine.py
+bankroll.py
+kelly.py
+analytics.py
+viz/
+calibration_plot.py
+attention_plot.py
+equity_plot.py
+api/
+serve.py
+cli.py
+notebooks/
+01_eda.ipynb
+02_feature_checks.ipynb
+```
+
+# 実装詳細（重要ポイント）
+- 時系列テンソル作成：
+  - 各馬について `過去N走`を時間順配列に詰め、欠損はmask（padding）を導入
+  - 位置エンコーディング（標準正弦 or 学習可能）
+- 条件注意：
+  - レース条件をエンベディング後、Cross-Attentionで系列隠れ状態にクエリ
+- 馬間注意（Set Attention）：
+  - レース内馬表現（[num_horses, d_model]）に MultiheadAttention
+  - 出走頭数変動への対応（padding + mask）
+- 出力ヘッド：
+  - 最終MLPで`p_win`、`sigmoid`出力
+  - 推論後に較正器（保存済み）を適用
+- 学習:
+  - K-Fold CV（レースIDリーク回避：同一レースは同fold内に完結させる）
+  - 早期停止、LRスケジューラ、重み減衰
+  - オプションでOptuna: 層数/ヘッド数/d_model/dropout/weight_decay 等
+- バックテスト:
+  - オッズが無い場合はダミー列で例示
+  - ベット記録CSV（race_id, horse_id, stake, odds, result, pnl）を保存
+- 可視化:
+  - キャリブレーション曲線、リライアビリティ図
+  - アテンション重み（過去走×ヘッド, 馬間行列）をpng保存
+- 再現性:
+  - `Makefile` 例：
+    - `make setup`（依存導入）
+    - `make data`（サンプルCSV生成→前処理）
+    - `make train`
+    - `make predict RACE_ID=...`
+    - `make backtest`
+
+# セキュリティ/ライセンス
+- 生成コードにMITライセンスヘッダ
+- 外部データ取得はダミーI/Fのまま（鍵やスクレイピングは入れない）
+
+# ドキュメント（README.mdに含める）
+- 背景とモデル概要（図）
+- セットアップ手順
+- データスキーマとサンプル
+- 学習・推論・バックテスト手順
+- 指標の読み方（ROI/キャリブレーション）
+- よくある拡張（順位分布、連系馬券、ペース特徴、血統グラフ）
+
+# 出力形式（あなたが今から生成する成果物）
+1. 上記構成の**ディレクトリと主要ファイルの中身**（すべてコード入り）
+2. ダミーCSV（5–10行）を `/data/raw/` に生成するスクリプト
+3. `README.md`（実行手順つき）
+4. 代表的なAttentionブロック（Self/Cross/Set）実装
+5. 主要ユニットテスト最小セット（pytest）
+
+# 品質基準（AC）
+- `make data && make train` がエラーなく完走（ダミーデータでOK）
+- `make backtest` がダミーでもレポートCSV/PNGを出力
+- 学習済みモデル/較正器が保存・再読込できる
+- `cli.py predict` がrace_id入力で各馬の確率と期待値を出力
+
+# TODO（ユーザーが後で差し替え）
+- 実データ（JRA-VAN等）への接続層
+- 特徴量の拡充（ラップ、調教、血統、騎手・厩舎動向など）
+- 連系馬券の期待値最適化

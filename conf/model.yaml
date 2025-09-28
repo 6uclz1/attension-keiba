@@ -1,0 +1,18 @@
+transformer:
+  d_model: 64
+  n_heads: 4
+  num_layers: 2
+  dim_feedforward: 128
+  dropout: 0.1
+  sequence_length: 6
+  static_dim: 16
+  categorical_embedding_dim: 16
+  use_horse_interaction_attention: true
+  interaction_heads: 2
+  positional_encoding: sinusoidal
+baseline_lgbm:
+  num_leaves: 31
+  learning_rate: 0.1
+  n_estimators: 100
+  subsample: 0.8
+  colsample_bytree: 0.8
